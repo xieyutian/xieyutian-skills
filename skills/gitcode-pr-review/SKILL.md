@@ -18,6 +18,20 @@ description: GitCode Pull Request 自动批量审查技能。自动扫描 Cangji
 
 **审查策略**：每个仓库获取最新开启的 **10 个 open 状态 PR**，自动跳过已审查的 PR。
 
+### 目录筛选规则（cangjie_runtime 仓库专属）
+
+> **重要**：对于 `cangjie_runtime` 仓库，仅审查修改 `stdlib` 目录的 PR，跳过修改 `runtime` 目录的 PR。
+
+| 筛选条件 | 处理方式 | 说明 |
+|----------|----------|------|
+| 仅修改 `stdlib/` 及其子目录 | **执行审查** | 标准库相关变更 |
+| 修改了 `runtime/` 及其子目录 | **跳过审查** | 运行时底层实现，不审查 |
+| 同时修改 `stdlib/` 和 `runtime/` | **跳过审查** | 混合变更，暂不审查 |
+
+**筛选方法**：通过 GitCode API 获取 PR 的变更文件列表，检查文件路径前缀：
+- 文件路径以 `stdlib/` 开头 → 符合审查条件
+- 文件路径以 `runtime/` 开头 → 跳过此 PR
+
 ## 使用前提
 
 - 系统已安装 Git
@@ -169,7 +183,49 @@ python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Ca
 
 **处理逻辑**：
 - `already_reviewed: true` → **跳过此 PR**，输出「⏭️ 已跳过 PR #1028（已审查）」
-- `already_reviewed: false` → **执行审查子流程**
+- `already_reviewed: false` → **执行目录筛选检查**
+
+---
+
+### 步骤 2.5: 目录筛选检查（仅 cangjie_runtime 仓库）
+
+> **目的**：对于 cangjie_runtime 仓库，检查 PR 的变更文件是否在 stdlib 目录下。
+
+**执行命令**（获取变更文件列表）：
+
+```bash
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Cangjie --repo cangjie_runtime --pr <pr_number> --files
+
+# Windows 用户将 python3 替换为 python
+```
+
+**筛选逻辑**：
+
+1. 解析返回的文件列表，提取每个文件的路径
+2. 检查文件路径前缀：
+   - 如果**所有**变更文件路径都以 `stdlib/` 开头 → **执行审查**
+   - 如果**任意**变更文件路径以 `runtime/` 开头 → **跳过此 PR**
+3. 输出筛选结果：
+   - 符合条件：`✅ PR #1028 符合审查条件（仅修改 stdlib 目录）`
+   - 不符合条件：`⏭️ 已跳过 PR #1028（修改了 runtime 目录）`
+
+**示例**：
+
+```
+=== PR #1059 文件变更 ===
+  [?] stdlib/libs/std/core/thread.cj (+11/-8)
+  [?] stdlib/libs/std/core/c_pointer_resource.cj (+4/-6)
+  [?] stdlib/libs/std/core/c_string_resource.cj (+4/-6)
+✅ PR #1059 符合审查条件（仅修改 stdlib 目录）
+
+=== PR #1056 文件变更 ===
+  [?] runtime/CMakeLists.txt (+12/-17)
+  [?] runtime/build/windows_rename_section.sh (+0/-47)
+  [?] runtime/src/StackManager.cpp (+1/-1)
+⏭️ 已跳过 PR #1056（修改了 runtime 目录）
+```
+
+> **注意**：此筛选仅适用于 `cangjie_runtime` 仓库，`cangjie_stdx` 仓库无需筛选。
 
 ---
 
@@ -231,17 +287,11 @@ python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Ca
 6. 执行代码质量审查清单
 7. 综合分析并输出报告
 
-#### 3.7 展示报告并询问是否发布
+#### 3.7 自动发布审查报告
 
-审查完成后，**先向用户展示完整审查报告**，然后询问是否需要发布到 GitCode PR：
+审查完成后，**自动将审查报告发布到 GitCode PR**，无需用户确认（适合自动化场景）：
 
-> 审查报告已生成。是否需要将此报告发布到 GitCode PR #<PR编号>？
-> - [Y] 发布此报告，继续下一个 PR
-> - [N] 跳过此报告，继续下一个 PR
-> - [全部发布] 后续所有 PR 都自动发布，不再询问
-> - [全部跳过] 后续所有 PR 都自动跳过，不再询问
-
-**用户选择「全部发布」或「全部跳过」后**，后续 PR 将按选择自动处理，不再逐个询问。
+> ✅ 审查报告已自动发布到 GitCode PR #<PR编号>
 
 **发布评论命令**：
 
@@ -516,18 +566,15 @@ grep -rnE "(encrypt|decrypt|hash|crypto|auth)" "$REPO_DIR/<变更文件路径>"
 - 每个问题必须标注风险等级（高/中/低）
 - 全部使用中文输出
 
-### 步骤 6: 展示审查报告并询问是否发布
+### 步骤 6: 自动发布审查报告
 
-审查完成后，**先向用户展示完整审查报告**，然后询问是否需要发布到 GitCode PR。
+审查完成后，**自动将审查报告发布到 GitCode PR**，无需用户确认（适合自动化场景）。
 
-**展示方式**：直接在对话中输出完整的审查报告内容。
+> ✅ 审查报告已自动发布到 GitCode PR #<PR编号>
+> - 潜在问题已作为**行级评论**发布到对应的文件和代码行
+> - 改进建议已作为**整体评论**发布
 
-**询问用户**：
-> 审查报告已生成。是否需要将此报告发布到 GitCode PR？
-> - 潜在问题将作为**行级评论**发布到对应的文件和代码行
-> - 改进建议将作为**整体评论**发布
-
-**用户确认后执行**：
+**自动执行发布**：
 
 1. 将完整审查报告保存到临时文件（技能目录下的 `pr_review_report.md`）
 2. 设置环境变量并执行评论发布脚本（使用 `--parse-report` 参数）
@@ -776,7 +823,7 @@ if (tlData == nullptr) {
 - **必须执行修改全面性审查**，对照声称的修改点逐一验证
 - **必须执行安全审查清单**，逐项检查所有安全检查项，不得遗漏
 - **使用 Read 工具读取完整文件**，理解函数完整逻辑和上下文
-- **审查完成后先展示报告，用户确认后再发布评论到 PR**，包含潜在问题和改进建议
+- **审查完成后自动发布评论到 PR**，无需用户确认，包含潜在问题和改进建议（适合自动化场景如 openclaw）
 - **行级评论格式必须严格遵循规范**：` ```语言：文件路径#L 行号`，风险等级必须标注
 - **确保行号在 diff 范围内**：发布前使用 `git diff` 确认实际修改的行
 - **必须验证 PR 实际变更范围**（关键！）：

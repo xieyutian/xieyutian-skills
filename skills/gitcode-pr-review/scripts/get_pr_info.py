@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 GitCode PR 信息获取脚本
 获取指定 Pull Request 的详细信息和审查上下文
@@ -18,6 +19,12 @@ import argparse
 import re
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
+
+# 设置 stdout 编码为 UTF-8，避免 Windows GBK 编码问题
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 
 # GitCode API 基础 URL
@@ -351,11 +358,12 @@ def print_review_context(pr_info: PRInfo, files: List[PRFile], commits: List[PRC
     for ext, file_list in sorted(by_ext.items()):
         print(f"\n  .{ext} 文件 ({len(file_list)} 个):")
         for f in file_list:
+            # 使用 ASCII 符号替代 emoji，避免 Windows GBK 编码问题
             status_icon = {
-                "added": "🟢",
-                "modified": "🟡",
-                "removed": "🔴",
-                "renamed": "🔵"
+                "added": "[+]",      # 新增
+                "modified": "[~]",   # 修改
+                "removed": "[-]",    # 删除
+                "renamed": "[>]"     # 重命名
             }.get(f.status, "[?]")
             print(f"    {status_icon} {f.filename}")
 
