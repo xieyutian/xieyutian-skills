@@ -407,13 +407,120 @@ def print_review_context(pr_info: PRInfo, files: List[PRFile], commits: List[PRC
     print(json.dumps(context_data, indent=2, ensure_ascii=False))
 
 
+def get_current_user(access_token: str) -> Dict:
+    """
+    获取当前认证用户的信息
+
+    Args:
+        access_token: 用户授权码
+
+    Returns:
+        包含用户信息的字典 (login, id, name 等)
+    """
+    url = f"{BASE_URL}/user"
+    params = {"access_token": access_token}
+
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+    data = response.json()
+
+    return {
+        "login": data.get("login", ""),
+        "id": data.get("id", 0),
+        "name": data.get("name", ""),
+        "email": data.get("email", "")
+    }
+
+
+def list_open_prs(owner: str, repo: str, access_token: str, per_page: int = 10) -> List[PRInfo]:
+    """
+    获取仓库最新的 open 状态 PR 列表
+
+    Args:
+        owner: 仓库所属空间地址
+        repo: 仓库名称
+        access_token: 用户授权码
+        per_page: 每页数量（默认10，最多100）
+
+    Returns:
+        PRInfo 列表
+    """
+    url = f"{BASE_URL}/repos/{owner}/{repo}/pulls"
+    params = {
+        "access_token": access_token,
+        "state": "open",
+        "sort": "created",
+        "direction": "desc",
+        "per_page": per_page,
+        "page": 1
+    }
+
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+    data = response.json()
+
+    prs = []
+    for item in data:
+        prs.append(PRInfo(
+            number=item.get("number", 0),
+            title=item.get("title", ""),
+            state=item.get("state", ""),
+            body=item.get("body", "") or "",
+            user=item.get("user", {}).get("login", "N/A"),
+            created_at=item.get("created_at", ""),
+            updated_at=item.get("updated_at", ""),
+            head_branch=item.get("head", {}).get("ref", ""),
+            head_sha=item.get("head", {}).get("sha", ""),
+            base_branch=item.get("base", {}).get("ref", ""),
+            base_sha=item.get("base", {}).get("sha", ""),
+            merged=item.get("merged", False),
+            merged_at=item.get("merged_at"),
+            merged_by=item.get("merged_by", {}).get("login") if item.get("merged_by") else None,
+            html_url=item.get("html_url", ""),
+            labels=[label.get("name", "") for label in item.get("labels", [])],
+            assignees=[a.get("login", "") for a in item.get("assignees", [])]
+        ))
+
+    return prs
+
+
+def check_already_reviewed(owner: str, repo: str, pr_number: int, username: str, access_token: str) -> bool:
+    """
+    检查指定用户是否已在某个 PR 上发表过评论
+
+    Args:
+        owner: 仓库所属空间地址
+        repo: 仓库名称
+        pr_number: PR 编号
+        username: 要检查的用户名
+        access_token: 用户授权码
+
+    Returns:
+        True 表示已评论，False 表示未评论
+    """
+    url = f"{BASE_URL}/repos/{owner}/{repo}/pulls/{pr_number}/comments"
+    params = {"access_token": access_token}
+
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+    comments = response.json()
+
+    # 遍历评论，检查是否有指定用户的评论
+    for comment in comments:
+        comment_user = comment.get("user", {}).get("login", "")
+        if comment_user == username:
+            return True
+
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="GitCode PR 信息获取工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 获取 PR 基本信息
+  # 传统模式 - 获取 PR 审查上下文
   python get_pr_info.py <token> <owner> <repo> <pr_number>
 
   # 获取完整审查上下文
@@ -424,14 +531,38 @@ def main():
 
   # 获取 commits 信息
   python get_pr_info.py <token> <owner> <repo> <pr_number> --commits
+
+  # 新增 action 模式
+  # 获取当前用户信息
+  python get_pr_info.py --token <token> --action get_user
+
+  # 列出仓库最新 open PR（JSON 格式）
+  python get_pr_info.py --token <token> --owner <owner> --repo <repo> --action list_prs
+
+  # 检查是否已审查某个 PR
+  python get_pr_info.py --token <token> --owner <owner> --repo <repo> --pr <number> --username <user> --action check_reviewed
 """
     )
 
+    # 位置参数（传统模式，可选）
     parser.add_argument("token", nargs="?", help="GitCode access_token")
     parser.add_argument("owner", nargs="?", help="仓库所有者")
     parser.add_argument("repo", nargs="?", help="仓库名称")
     parser.add_argument("pr_number", nargs="?", type=int, help="PR 编号")
 
+    # 命名参数（新模式）
+    parser.add_argument("--token", dest="token_opt", help="GitCode access_token（命名参数）")
+    parser.add_argument("--owner", dest="owner_opt", help="仓库所有者")
+    parser.add_argument("--repo", dest="repo_opt", help="仓库名称")
+    parser.add_argument("--pr", dest="pr_opt", type=int, help="PR 编号")
+    parser.add_argument("--username", dest="username_opt", help="要检查的用户名（用于 check_reviewed）")
+    parser.add_argument("--per-page", dest="per_page_opt", type=int, default=10, help="PR 列表每页数量（默认10）")
+
+    # action 参数
+    parser.add_argument("--action", choices=["get_user", "list_prs", "check_reviewed"],
+                        help="执行特定操作：get_user（获取当前用户）、list_prs（列出最新PR）、check_reviewed（检查是否已审查）")
+
+    # 传统模式选项
     parser.add_argument("--review-context", action="store_true",
                         help="输出完整审查上下文（默认）")
     parser.add_argument("--files", action="store_true",
@@ -445,28 +576,82 @@ def main():
 
     args = parser.parse_args()
 
-    # 获取认证信息
-    access_token = args.token or os.environ.get("GITCODE_ACCESS_TOKEN")
-    owner = args.owner or os.environ.get("REPO_OWNER")
-    repo = args.repo or os.environ.get("REPO_NAME")
-    pr_number = args.pr_number or os.environ.get("PR_NUMBER")
+    # 合并位置参数和命名参数（命名参数优先）
+    access_token = args.token_opt or args.token or os.environ.get("GITCODE_ACCESS_TOKEN")
+    owner = args.owner_opt or args.owner or os.environ.get("REPO_OWNER")
+    repo = args.repo_opt or args.repo or os.environ.get("REPO_NAME")
+    pr_number = args.pr_opt or args.pr_number or os.environ.get("PR_NUMBER")
+    username = args.username_opt or os.environ.get("GITCODE_USERNAME")
+    per_page = args.per_page_opt
 
     if not access_token:
         print("错误: 需要提供 GitCode access_token")
         print("\n使用方法:")
-        print("  1. 作为参数: python get_pr_info.py <token> <owner> <repo> <pr_number>")
-        print("  2. 设置环境变量: export GITCODE_ACCESS_TOKEN=your_token")
+        print("  1. 传统模式: python get_pr_info.py <token> <owner> <repo> <pr_number>")
+        print("  2. action 模式: python get_pr_info.py --token <token> --action <action>")
+        print("  3. 设置环境变量: export GITCODE_ACCESS_TOKEN=your_token")
         print("\n获取 token: https://gitcode.com/-/profile/personal_access_tokens")
         sys.exit(1)
 
-    if not all([owner, repo, pr_number]):
-        print("错误: 需要提供 owner, repo 和 pr_number")
-        print("用法: python get_pr_info.py <token> <owner> <repo> <pr_number>")
-        sys.exit(1)
-
-    pr_number = int(pr_number)
-
     try:
+        # 新增 action 模式处理
+        if args.action == "get_user":
+            print("正在获取当前用户信息...")
+            user_info = get_current_user(access_token)
+            print(json.dumps(user_info, indent=2, ensure_ascii=False))
+            sys.exit(0)
+
+        elif args.action == "list_prs":
+            if not all([owner, repo]):
+                print("错误: list_prs 需要提供 owner 和 repo")
+                print("用法: python get_pr_info.py --token <token> --owner <owner> --repo <repo> --action list_prs")
+                sys.exit(1)
+            print(f"正在获取 {owner}/{repo} 最新 {per_page} 个 open PR...")
+            prs = list_open_prs(owner, repo, access_token, per_page)
+            # 输出 JSON 格式的 PR 列表摘要
+            pr_list = [
+                {
+                    "number": pr.number,
+                    "title": pr.title,
+                    "user": pr.user,
+                    "created_at": pr.created_at,
+                    "head_branch": pr.head_branch,
+                    "base_branch": pr.base_branch,
+                    "html_url": pr.html_url
+                }
+                for pr in prs
+            ]
+            print(json.dumps(pr_list, indent=2, ensure_ascii=False))
+            sys.exit(0)
+
+        elif args.action == "check_reviewed":
+            if not all([owner, repo, pr_number]):
+                print("错误: check_reviewed 需要提供 owner, repo 和 pr")
+                print("用法: python get_pr_info.py --token <token> --owner <owner> --repo <repo> --pr <number> --username <user> --action check_reviewed")
+                sys.exit(1)
+            pr_number = int(pr_number)
+
+            # 如果没有提供 username，自动获取当前用户
+            if not username:
+                print("未提供 username，正在获取当前用户...")
+                user_info = get_current_user(access_token)
+                username = user_info.get("login", "")
+                print(f"当前用户: {username}")
+
+            print(f"正在检查 {username} 是否已审查 {owner}/{repo}#{pr_number}...")
+            reviewed = check_already_reviewed(owner, repo, pr_number, username, access_token)
+            # 输出简单结果供脚本解析
+            result = {"pr_number": pr_number, "username": username, "already_reviewed": reviewed}
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            sys.exit(0)
+
+        # 传统模式处理
+        if not all([owner, repo, pr_number]):
+            print("错误: 需要提供 owner, repo 和 pr_number")
+            print("用法: python get_pr_info.py <token> <owner> <repo> <pr_number>")
+            sys.exit(1)
+
+        pr_number = int(pr_number)
         print(f"正在获取 PR 信息: {owner}/{repo}#{pr_number}...")
 
         # 获取 PR 基本信息

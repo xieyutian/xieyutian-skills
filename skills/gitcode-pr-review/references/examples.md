@@ -36,7 +36,10 @@ git -C "$REPO_DIR" fetch https://gitcode.com/Cangjie/cangjie_runtime.git merge-r
 git -C "$REPO_DIR" checkout review-1028
 
 # 4.5. 获取 PR 审查上下文（通过 API）
+# 传统模式
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <token> --owner Cangjie --repo cangjie_runtime --pr 1028
 
 # 5. 执行审查（同上）
 # ...
@@ -85,12 +88,18 @@ git -C "$REPO_DIR" fetch https://gitcode.com/Cangjie/cangjie_runtime.git merge-r
 git -C "$REPO_DIR" checkout review-1028
 
 # 4.5. 获取 PR 审查上下文（通过 API）
+# 传统模式
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <token> --owner Cangjie --repo cangjie_runtime --pr 1028
 # 输出会显示 PR 的声称修改点、文件变更等信息
 
 # 5. 执行审查
 # 5.1 获取变更文件列表
+# 传统模式
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028 --files
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <token> --owner Cangjie --repo cangjie_runtime --pr 1028 --files
 
 # 5.2 读取变更文件的完整内容（使用 Read 工具）
 # 例如：Read 文件路径 $REPO_DIR/stdlib/libs/std/net/native/socket_buffer.c

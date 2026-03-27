@@ -1,18 +1,29 @@
 ---
 name: gitcode-pr-review
-description: GitCode Pull Request 代码审查技能。当用户需要审查 GitCode 仓库的 PR、进行代码评审、或者想要查看某个 PR 的变更并获取改进建议时使用此技能。用户需提供仓库 Clone 地址和 PR 编号。
+description: GitCode Pull Request 自动批量审查技能。自动扫描 Cangjie 组织的两个核心仓库（runtime、stdx）最新开启的 PR，跳过已审查的，对未审查的 PR 执行深度代码审查并发表评论。
 ---
 
-# GitCode PR Review
+# GitCode PR Review（批量自动审查版）
 
-对 GitCode 平台的 Pull Request 进行自动化代码审查，识别潜在问题、安全漏洞并提供改进建议。同时评估 PR 修改的全面性和正确性。
+自动扫描 GitCode 平台上 Cangjie 组织的两个核心仓库，批量审查最新开启的 Pull Request，跳过已审查的，对未审查的 PR 执行深度代码审查、识别潜在问题、安全漏洞并提供改进建议。
+
+## 固定审查范围
+
+本技能**自动审查**以下两个仓库，无需用户提供仓库地址：
+
+| 仓库 | Clone 地址 | 说明 |
+|------|------------|------|
+| cangjie_runtime | `https://gitcode.com/Cangjie/cangjie_runtime.git` | 运行时仓库 |
+| cangjie_stdx | `https://gitcode.com/Cangjie/cangjie_stdx.git` | 标准库扩展仓库 |
+
+**审查策略**：每个仓库获取最新开启的 **10 个 open 状态 PR**，自动跳过已审查的 PR。
 
 ## 使用前提
 
 - 系统已安装 Git
 - 系统已安装 Python3 和 requests 库
 - 有足够的磁盘空间克隆仓库
-- **已配置 GitCode Token**（用于自动发布审查评论）
+- **已配置 GitCode Token**（用于自动获取PR列表、检查审查状态、发布评论）
 
 ## 输入参数
 
@@ -20,12 +31,10 @@ description: GitCode Pull Request 代码审查技能。当用户需要审查 Git
 
 | 参数 | 说明 | 必填 | 示例 |
 |------|------|------|------|
-| 仓库 Clone 地址 | GitCode 仓库的 HTTPS 或 SSH 克隆地址 | 是* | `https://gitcode.com/user/repo.git` |
-| PR 编号 | 要审查的 Pull Request 编号 | 是 | `123` |
-| GitCode Token | GitCode 个人访问令牌（用于发布评论） | 是 | `your-token` |
-| 本地仓库路径 | 用户已有的仓库目录路径 | 否* | `/home/user/myproject` |
+| GitCode Token | GitCode 个人访问令牌（用于获取PR列表、检查审查状态、发布评论） | 是 | `your-token` |
+| 本地仓库路径 | 用户已有的仓库目录路径（可选，用于覆盖缓存） | 否 | `/home/user/cangjie_runtime` |
 
-> *注：如果提供了「本地仓库路径」，则「仓库 Clone 地址」可从本地仓库获取，无需用户提供。
+> **重要变更**：仓库地址和 PR 编号**不再需要用户提供**，由技能自动从固定两个仓库获取最新 PR。
 
 ## 流程变量
 
@@ -62,126 +71,229 @@ description: GitCode Pull Request 代码审查技能。当用户需要审查 Git
 
 **缓存失效处理**：自动检测目录是否存在，不存在时清理缓存并重新询问用户。
 
-## 审查流程
+## 审查流程（批量自动模式）
 
-### 步骤 0: 确认工作环境（必须首先执行）
+### 步骤 0: 准备工作（必须首先执行）
 
-> **目的**：避免重复克隆仓库，保护用户工作区的未提交修改。
+**0.1 获取 GitCode Token**
 
-**首先检查缓存**：
+如果用户未提供 Token，询问获取：
+> 请提供 GitCode 个人访问令牌（Token）。
+> 获取方式：https://gitcode.com/-/profile/personal_access_tokens
 
-1. 从用户提供的 PR URL 或 Clone 地址提取仓库 URL
-   - PR URL 格式：`https://gitcode.com/<owner>/<repo>/pulls/<pr_number>`
-   - 提取后：`https://gitcode.com/<owner>/<repo>.git`
+**0.2 获取当前用户名**
 
-2. 读取缓存文件 `~/.gitcode-pr-review/repo_cache.json`（不存在则跳过）
+执行命令获取当前认证用户：
 
-3. **检查缓存命中**：
-   - 如果缓存中存在该仓库的本地路径：
-     - **验证路径有效性**：检查目录是否存在
-     - 如果有效：自动使用，跳过询问
-     - 如果无效：清理该缓存项，继续询问流程
-   - 如果缓存中没有：执行询问流程
+```bash
+# 使用 action 模式（推荐）
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --action get_user
+
+# Windows 用户将 python3 替换为 python
+```
+
+输出示例：
+```json
+{
+  "login": "your_username",
+  "id": 12345,
+  "name": "Your Name",
+  "email": "your@email.com"
+}
+```
+
+**记录变量**：`CURRENT_USER = <login 字段值>`
 
 ---
 
-**询问流程**（仅当缓存未命中时）：
+### 步骤 1: 批量扫描 PR
 
-> 请问您是否已有该仓库的本地克隆目录？
+遍历两个固定仓库，获取每个仓库的最新 open PR：
+
+**仓库列表**：
+1. `Cangjie/cangjie_runtime`
+2. `Cangjie/cangjie_stdx`
+
+**对每个仓库执行**：
+
+```bash
+# 获取最新 10 个 open PR（使用 action 模式）
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Cangjie --repo <repo_name> --action list_prs --per-page 10
+
+# Windows 用户将 python3 替换为 python
+```
+
+输出示例：
+```json
+[
+  {
+    "number": 1028,
+    "title": "修复运行时类型推断问题",
+    "user": "developer1",
+    "created_at": "2025-03-28T10:00:00Z",
+    "head_branch": "fix-type-inference",
+    "base_branch": "main",
+    "html_url": "https://gitcode.com/Cangjie/cangjie_runtime/pulls/1028"
+  },
+  ...
+]
+```
+
+> **参数说明**：
+> - `--per-page`：每页返回的 PR 数量，默认 10，最大 100
+
+---
+
+### 步骤 2: 检查审查状态
+
+对每个获取到的 PR，检查当前用户是否已发表过评论：
+
+```bash
+# 检查是否已审查（使用 action 模式）
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Cangjie --repo <repo_name> --pr <pr_number> --username <CURRENT_USER> --action check_reviewed
+
+# Windows 用户将 python3 替换为 python
+```
+
+> **参数说明**：
+> - `--username`：要检查的用户名，如果不提供会自动获取当前用户
+
+输出示例：
+```json
+{
+  "pr_number": 1028,
+  "username": "your_username",
+  "already_reviewed": false
+}
+```
+
+**处理逻辑**：
+- `already_reviewed: true` → **跳过此 PR**，输出「⏭️ 已跳过 PR #1028（已审查）」
+- `already_reviewed: false` → **执行审查子流程**
+
+---
+
+### 步骤 3: 单 PR 审查子流程（复用原有流程）
+
+对每个需要审查的 PR，执行以下子流程（对应原有的「步骤 0-7」）：
+
+#### 3.0 确认工作环境
+
+**检查缓存**：
+1. 读取缓存文件 `~/.gitcode-pr-review/repo_cache.json`
+2. 检查是否存在该仓库（如 `https://gitcode.com/Cangjie/cangjie_runtime.git`）的本地路径
+3. 如果缓存有效：自动使用，跳过询问
+4. 如果缓存无效或不存在：询问用户是否有本地仓库目录
+
+**询问流程**（仅当缓存未命中时）：
+> 请问您是否已有 `Cangjie/<repo_name>` 仓库的本地克隆目录？
 > - 如果有，请提供目录路径
 > - 如果没有，我将为您克隆仓库
 
-**用户提供路径后**：将 `仓库URL -> 本地路径` 写入缓存文件
-
----
-
 **情况 A：用户已有仓库目录**
-
-1. **记录仓库绝对路径**：
-   ```bash
-   pwd  # 获取用户提供的目录的绝对路径
-   ```
-   **记录变量**：`REPO_DIR = <pwd 输出>`
-
-2. **记录原始信息**：
-   ```bash
-   # 记录当前分支
-   git -C "$REPO_DIR" branch --show-current
-   # 记录当前目录（与 REPO_DIR 相同）
-   pwd
-   ```
-
-3. **检查工作区状态**：
-   ```bash
-   git -C "$REPO_DIR" status
-   ```
-
-4. **处理未提交的修改**（如有）：
-   ```bash
-   # 如果有未提交的修改（working tree not clean）
-   git -C "$REPO_DIR" stash push -m "auto-stash-before-pr-review-$(date +%Y%m%d%H%M%S)"
-   # 记录 HAS_STASH = true
-   ```
-
-5. **继续执行步骤 3**（获取 PR 分支）
-
----
+- 记录 `REPO_DIR`、`ORIGINAL_BRANCH`
+- 检查工作区状态，如有未提交修改则 stash
 
 **情况 B：用户没有仓库目录**
+- 执行克隆：`mkdir -p pr_review && cd pr_review && git clone https://gitcode.com/Cangjie/<repo_name>.git`
+- 记录 `REPO_DIR = <pwd>/<repo_name>`
 
-1. **执行步骤 1-2**（创建目录、克隆仓库）
-2. **设置变量**：`HAS_LOCAL_REPO = false`
-3. **继续执行步骤 3**（获取 PR 分支）
+#### 3.1-3.4 获取并切换 PR 分支
+
+```bash
+# 获取 PR 分支
+git -C "$REPO_DIR" fetch https://gitcode.com/Cangjie/<repo_name>.git merge-requests/<PR编号>/head:review-<PR编号>
+
+# 切换分支
+git -C "$REPO_DIR" checkout review-<PR编号>
+```
+
+#### 3.5 获取 PR 审查上下文
+
+```bash
+# 传统模式（位置参数）
+python3 <技能目录>/scripts/get_pr_info.py <GitCode Token> Cangjie <repo_name> <PR编号>
+
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner Cangjie --repo <repo_name> --pr <PR编号>
+
+# Windows 用户将 python3 替换为 python
+```
+
+#### 3.6 执行代码审查
+
+按照原有「步骤 5」执行：
+1. 获取变更文件列表
+2. 读取完整文件内容（使用 Read 工具）
+3. 查看 diff 了解具体修改
+4. 执行修改全面性和正确性审查清单
+5. 执行安全审查清单
+6. 执行代码质量审查清单
+7. 综合分析并输出报告
+
+#### 3.7 展示报告并询问是否发布
+
+审查完成后，**先向用户展示完整审查报告**，然后询问是否需要发布到 GitCode PR：
+
+> 审查报告已生成。是否需要将此报告发布到 GitCode PR #<PR编号>？
+> - [Y] 发布此报告，继续下一个 PR
+> - [N] 跳过此报告，继续下一个 PR
+> - [全部发布] 后续所有 PR 都自动发布，不再询问
+> - [全部跳过] 后续所有 PR 都自动跳过，不再询问
+
+**用户选择「全部发布」或「全部跳过」后**，后续 PR 将按选择自动处理，不再逐个询问。
+
+**发布评论命令**：
+
+```bash
+export GITCODE_TOKEN="<GitCode Token>"
+export REPO_OWNER="Cangjie"
+export REPO_NAME="<repo_name>"
+export PR_NUMBER="<PR编号>"
+
+python3 <技能目录>/scripts/pr-comment.py -f <技能目录>/pr_review_report.md --parse-report
+```
+
+#### 3.8 清理和恢复
+
+**情况 A（用户已有仓库）**：
+```bash
+git -C "$REPO_DIR" checkout <ORIGINAL_BRANCH>
+git -C "$REPO_DIR" stash pop  # 如果之前有 stash
+```
+
+**情况 B（新克隆仓库）**：
+询问是否清理临时目录，如用户同意则 `rm -rf "$(dirname "$REPO_DIR")"`
 
 ---
 
-### 步骤 1: 创建工作目录并克隆仓库（仅情况 B）
+### 步骤 4: 继续下一个 PR
 
-> **关键**：克隆完成后必须立即记录仓库绝对路径，供后续命令使用。
+完成当前 PR 审查后，返回「步骤 2」处理下一个 PR。
 
-```bash
-# 创建目录并克隆，使用链式命令确保在同一个 shell 中执行
-mkdir -p pr_review && cd pr_review && git clone <仓库Clone地址>
+---
+
+### 步骤 5: 输出汇总
+
+全部 PR 处理完成后，输出汇总报告：
+
 ```
+📊 批量审查完成汇总
 
-**克隆完成后，立即获取并记录仓库绝对路径**：
+仓库：Cangjie/cangjie_runtime
+  - 扫描 PR：10 个
+  - 已跳过（已审查）：X 个
+  - 已审查发布：X 个
+  - 跳过发布：X 个
 
-```bash
-# 获取当前工作目录（pr_review 目录）
-pwd
-# 输出示例: /c/code/xyt_skill/pr_review
+仓库：Cangjie/cangjie_stdx
+  ...
 
-# 组合得到仓库绝对路径
-# REPO_DIR = <pwd输出>/<项目名称>
-# 示例: /c/code/xyt_skill/pr_review/xyt_commander
-```
-
-**记录变量**：`REPO_DIR = <仓库绝对路径>`
-
-> **注意**：由于 Bash 会话隔离，每个 Bash 命令都是独立的 shell，`cd` 不会持久化。因此必须记录绝对路径，后续命令使用 `git -C "$REPO_DIR"` 语法。
-
-### 步骤 2: 验证克隆结果
-
-```bash
-# 验证仓库目录存在
-ls -la "$REPO_DIR"
-
-# 确认是 Git 仓库
-git -C "$REPO_DIR" status
-```
-
-### 步骤 3: 获取 PR 分支
-
-```bash
-git -C "$REPO_DIR" fetch <仓库Clone地址> merge-requests/<PR编号>/head:review-<PR编号>
-```
-
-此命令将 PR 的代码拉取到本地，创建名为 `review-<PR编号>` 的分支。
-
-### 步骤 4: 切换到审查分支
-
-```bash
-git -C "$REPO_DIR" checkout review-<PR编号>
+总计：
+  - 扫描 PR：20 个
+  - 已跳过（已审查）：X 个
+  - 新审查发布：X 个
+  - 跳过发布：X 个
 ```
 
 
@@ -200,7 +312,13 @@ git -C "$REPO_DIR" diff origin/dev review-<PR 编号> --stat
 
 **方法 1：通过 GitCode API 获取（推荐）**
 ```bash
+# 传统模式
 python3 <技能目录>/scripts/get_pr_info.py <Token> <owner> <repo> <PR 编号> --files
+
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <Token> --owner <owner> --repo <repo> --pr <PR 编号> --files
+
+# Windows 用户将 python3 替换为 python
 ```
 
 **方法 2：使用 merge-base 计算正确的 diff 范围**
@@ -234,8 +352,13 @@ git -C "$REPO_DIR" log origin/dev..review-<PR 编号> --oneline
 # 从 Clone 地址提取 owner 和 repo
 # 例如 https://gitcode.com/Cangjie/cangjie_runtime.git -> owner=Cangjie, repo=cangjie_runtime
 
-# Windows 用户使用 python，Linux/macOS 用户使用 python3
+# 传统模式（位置参数）
 python3 <技能目录>/scripts/get_pr_info.py <GitCode Token> <owner> <repo> <PR编号>
+
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <GitCode Token> --owner <owner> --repo <repo> --pr <PR编号>
+
+# Windows 用户将 python3 替换为 python
 ```
 
 > **跨平台提示**：Windows 用户将 `python3` 替换为 `python`
@@ -264,9 +387,13 @@ python3 <技能目录>/scripts/get_pr_info.py <GitCode Token> <owner> <repo> <PR
 1. **获取变更文件列表**（通过 API）：
 
 ```bash
-# 获取 PR 文件变更列表
-# Windows 用户使用 python，Linux/macOS 用户使用 python3
+# 传统模式（位置参数）
 python3 <技能目录>/scripts/get_pr_info.py <Token> <owner> <repo> <PR编号> --files
+
+# 或使用命名参数模式
+python3 <技能目录>/scripts/get_pr_info.py --token <Token> --owner <owner> --repo <repo> --pr <PR编号> --files
+
+# Windows 用户将 python3 替换为 python
 ```
 
 > **跨平台提示**：Windows 用户将 `python3` 替换为 `python`
