@@ -3,7 +3,7 @@ name: gitcode-pr-review
 description: GitCode Pull Request 代码审查技能。当用户需要审查 GitCode 仓库的 PR、进行代码评审、或者想要查看某个 PR 的变更并获取改进建议时使用此技能。用户需提供仓库 Clone 地址和 PR 编号。
 ---
 
-# gitcode-pr-review
+# GitCode PR Review
 
 对 GitCode 平台的 Pull Request 进行自动化代码审查，识别潜在问题、安全漏洞并提供改进建议。同时评估 PR 修改的全面性和正确性。
 
@@ -183,6 +183,46 @@ git -C "$REPO_DIR" fetch <仓库Clone地址> merge-requests/<PR编号>/head:revi
 ```bash
 git -C "$REPO_DIR" checkout review-<PR编号>
 ```
+
+
+### 步骤 4.3: 验证 PR 实际变更范围（关键！）
+
+> **重要**：必须验证 PR 的实际变更范围，避免看到所有累积差异！
+
+**常见错误**：
+```bash
+# ❌ 错误：这会显示两个分支之间的所有累积差异
+git -C "$REPO_DIR" diff origin/dev review-<PR 编号> --stat
+# 可能显示 925 个文件变更（实际 PR 只有 3 个文件）
+```
+
+**正确方法**（三选一）：
+
+**方法 1：通过 GitCode API 获取（推荐）**
+```bash
+python3 <技能目录>/scripts/get_pr_info.py <Token> <owner> <repo> <PR 编号> --files
+```
+
+**方法 2：使用 merge-base 计算正确的 diff 范围**
+```bash
+git -C "$REPO_DIR" diff $(git -C "$REPO_DIR" merge-base origin/dev review-<PR 编号>) review-<PR 编号> --stat
+```
+
+**方法 3：查看 PR 的实际 commits**
+```bash
+git -C "$REPO_DIR" log origin/dev..review-<PR 编号> --oneline
+```
+
+**验证步骤**：
+1. 通过 API 获取变更文件数
+2. 使用 `git diff --stat` 验证
+3. 如果不一致，**以 API 为准**
+
+**原因说明**：
+- PR 分支可能从目标分支的**旧版本**创建
+- 之后目标分支有其他 PR 的提交
+- 直接 `git diff origin/dev review-<PR>` 会显示**所有累积差异**
+- 使用 `merge-base` 可以找到共同祖先，只显示 PR 的实际变更
 
 ### 步骤 4.5: 获取 PR 审查上下文（重要）
 
@@ -388,6 +428,157 @@ python3 <技能目录>/scripts/pr-comment.py -f <技能目录>/pr_review_report.
 
 **用户拒绝发布**：跳过此步骤，直接进入步骤 7。
 
+---
+
+## 📝 行级评论发布格式规范（关键！）
+
+**重要**：为了让 `pr-comment.py` 脚本正确解析并发布行级评论，审查报告必须严格按照以下格式编写：
+
+### 1. 问题章节位置
+
+潜在问题必须放在 `### ⚠️ 潜在问题` 或 `### 潜在问题` 章节下。
+
+### 2. 单个问题格式
+
+每个问题必须包含以下元素：
+
+```markdown
+#### 序号。问题标题
+
+```语言：文件路径#L 行号
+代码片段
+```
+
+**风险等级**: 高 | 中 | 低
+
+**问题描述**: 
+问题的详细描述...
+
+**建议**: 
+改进建议...
+```
+
+### 3. 代码块格式（最关键！）
+
+代码块必须严格遵循以下格式：
+
+````markdown
+```cpp:runtime/src/Interpreter/InterpreterSpecific.cpp#L227
+    if (tlData == nullptr) {
+        LOG(RTLOG_ERROR, "[Interpreter] IsPendingSafePoint called with null thread_local_data_t");
+        return false;
+    }
+```
+````
+
+**格式要求**：
+- ` ```语言：文件路径#L 行号`
+- 语言：使用小写（`cpp`, `c`, `cj`, `python` 等）
+- 文件路径：**相对路径**，从仓库根目录开始（如 `runtime/src/Interpreter/InterpreterSpecific.cpp`）
+- 行号：使用 `#L 行号` 格式（如 `#L227`）
+- 代码片段：必须是 PR 中实际修改的代码
+
+### 4. 风险等级标注
+
+必须明确标注风险等级：
+```markdown
+**风险等级**: 高
+```
+或
+```markdown
+**风险等级**: 中
+```
+或
+```markdown
+**风险等级**: 低
+```
+
+### 5. 完整示例
+
+````markdown
+### ⚠️ 潜在问题
+
+#### 1. 线程安全问题 - 全局状态初始化
+
+```cpp:runtime/src/Interpreter/InterpreterSpecific.cpp#L50
+    interpreter_interface_t* operator->()
+    {
+        if (initialized) {
+            return &interpreterInterface;
+        }
+        LOG(RTLOG_FATAL, "Usage of uninitialized interpreter interface\n");
+        return nullptr;
+    }
+```
+
+**风险等级**: 高
+
+**问题描述**: 
+`initialized` 标志不是原子变量，多线程环境下可能存在竞态条件。
+
+**建议**: 
+使用 `std::atomic<bool>` 或 `std::once_flag` 确保线程安全的初始化。
+
+---
+
+#### 2. 错误处理不完整 - 空指针检查
+
+```cpp:runtime/src/Interpreter/InterpreterSpecific.cpp#L227
+    if (tlData == nullptr) {
+        LOG(RTLOG_ERROR, "[Interpreter] IsPendingSafePoint called with null thread_local_data_t");
+        return false;
+    }
+```
+
+**风险等级**: 中
+
+**问题描述**: 
+仅记录错误日志后返回 false，可能导致后续逻辑错误。
+
+**建议**: 
+```cpp
+if (tlData == nullptr) {
+    LOG(RTLOG_FATAL, "[Interpreter] IsPendingSafePoint called with null thread_local_data_t");
+    abort();
+}
+```
+````
+
+### 6. 常见错误
+
+| 错误 | 正确格式 | 说明 |
+|------|----------|------|
+| ` ```c:src/main.c#L10` | ` ```c:src/main.c#L10` | 文件路径必须是相对路径 |
+| ` **风险等级**：高` | ` **风险等级**: 高` | 使用英文冒号 `:` |
+| 缺少风险等级 | 必须标注 | 解析器依赖风险等级识别问题块 |
+| 代码块无行号 | `#L 行号` | 行级评论需要行号 |
+| 行号不在 diff 范围 | 检查实际 diff | GitCode API 会拒绝无效行号 |
+
+### 7. 发布失败处理
+
+如果行级评论发布失败，常见原因：
+
+1. **行号不在 diff 范围内**
+   - 使用 `git diff origin/main pr-<PR 号> -- 文件路径` 确认实际修改的行
+   - 确保评论的行号在 diff 输出中
+
+2. **文件路径错误**
+   - 使用相对路径（从仓库根目录开始）
+   - 检查文件名大小写
+
+3. **代码块格式错误**
+   - 确保格式为 ` ```语言：文件路径#L 行号`
+   - 使用英文冒号 `:`
+
+4. **PR 有多个提交**
+   - 行号可能已变化
+   - 使用 `git show pr-<PR 号>:文件路径 | head -n 行号 | tail -n 1` 验证
+
+**失败处理**：
+- 如果行级评论失败，整体评论仍然会发布
+- 手动在 GitCode PR 页面添加行级评论
+- 或者在整体评论中明确标注文件路径和行号
+
 ### 步骤 7: 清理和恢复（重要）
 
 > **目的**：清理临时文件，恢复用户原有的工作状态。
@@ -422,7 +613,7 @@ python3 <技能目录>/scripts/pr-comment.py -f <技能目录>/pr_review_report.
    ```bash
    # 检查是否有我们的 stash
    git -C "$REPO_DIR" stash list | grep "auto-stash-before-pr-review"
-   
+
    # 如果有，恢复并删除 stash
    git -C "$REPO_DIR" stash pop
    ```
@@ -459,6 +650,12 @@ python3 <技能目录>/scripts/pr-comment.py -f <技能目录>/pr_review_report.
 - **必须执行安全审查清单**，逐项检查所有安全检查项，不得遗漏
 - **使用 Read 工具读取完整文件**，理解函数完整逻辑和上下文
 - **审查完成后先展示报告，用户确认后再发布评论到 PR**，包含潜在问题和改进建议
+- **行级评论格式必须严格遵循规范**：` ```语言：文件路径#L 行号`，风险等级必须标注
+- **确保行号在 diff 范围内**：发布前使用 `git diff` 确认实际修改的行
+- **必须验证 PR 实际变更范围**（关键！）：
+  - ❌ **错误**：`git diff origin/dev review-<PR>` 会显示所有累积差异
+  - ✅ **正确**：通过 GitCode API 获取实际变更文件数，或使用 `git diff $(git merge-base origin/dev review-<PR>) review-<PR>`
+  - **原因**：PR 分支可能从目标分支的旧版本创建，直接 diff 会包含其他 PR 的变更
 - 如果主分支名称不是 `main`（例如 `master`），需相应调整 diff 命令中的分支名
 - 大型仓库克隆可能需要较长时间，请耐心等待
 - 确保网络连接稳定以完成仓库克隆和 PR 分支获取
