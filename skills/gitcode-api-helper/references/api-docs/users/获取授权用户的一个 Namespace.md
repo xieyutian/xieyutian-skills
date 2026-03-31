@@ -1,0 +1,44 @@
+# 获取授权用户的一个 Namespace
+
+## API 端点
+
+**方法:** `GET`
+**端点:** `https://api.gitcode.com/api/v5/user/namespace`
+
+## Request
+
+### QUERY PARAMETERS
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| access_token | string | 是 | 用户授权码 |
+| path | string | 是 | Namespace path |
+
+
+## 代码示例
+
+### Python
+
+```python
+import http.client
+
+
+
+conn = http.client.HTTPSConnection("api.gitcode.com")
+
+payload = ''
+
+headers = {
+
+  'Accept': 'application/json'
+
+}
+
+conn.request("GET", "/api/v5/user/namespace", payload, headers)
+
+res = conn.getresponse()
+
+data = res.read()
+
+print(data.decode("utf-8"))
+```

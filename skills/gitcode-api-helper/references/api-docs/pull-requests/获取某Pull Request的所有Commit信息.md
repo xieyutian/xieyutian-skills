@@ -1,0 +1,53 @@
+# 获取某Pull Request的所有Commit信息
+
+## API 端点
+
+**方法:** `GET`
+**端点:** `https://api.gitcode.com/api/v5/repos/:owner/:repo/pulls/:number/commits`
+
+## Request
+
+### PATH PARAMETERS
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| owner | string | 是 | 仓库所属空间地址(组织或个人的地址path) |
+| repo | string | 是 | 仓库路径(path) |
+| number | integer | 是 | 第几个PR，即本仓库PR的序数 |
+
+### QUERY PARAMETERS
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| access_token | string | 是 | 用户授权码 |
+| page | string | 否 | 当前页码 |
+| per_page | string | 否 | 每页数量 |
+
+
+## 代码示例
+
+### Python
+
+```python
+import http.client
+
+
+
+conn = http.client.HTTPSConnection("api.gitcode.com")
+
+payload = ''
+
+headers = {
+
+  'Accept': 'application/json'
+
+}
+
+conn.request("GET", "/api/v5/repos/:owner/:repo/pulls/:number/commits", payload, headers)
+
+res = conn.getresponse()
+
+data = res.read()
+
+print(data.decode("utf-8"))
+```
