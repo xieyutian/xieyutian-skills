@@ -145,11 +145,27 @@ skills/gitcode-pr-review/
 ├── SKILL.md              # 技能定义和流程说明
 ├── scripts/
 │   ├── get_pr_info.py    # PR 信息获取脚本
-│   └── pr-comment.py     # 评论发布脚本
+│   └── pr-comment.py     # 评论发布脚本（支持行号范围格式）
 └── references/
-    ├── report-template.md # 审查报告模板
-    └── examples.md       # 使用示例
+    ├── checklists.md       # 完整审查清单
+    ├── comment-format.md   # 行级评论格式规范
+    ├── report-template.md  # 审查报告模板
+    └── examples.md         # 使用示例
 ```
+
+### 审查清单参考
+
+详细审查清单请参阅 [checklists.md](skills/gitcode-pr-review/references/checklists.md)，包含：
+- 修改全面性和正确性审查
+- 安全审查（P0-P2 优先级分级）
+- 代码质量审查
+
+### 行级评论格式
+
+行级评论格式规范请参阅 [comment-format.md](skills/gitcode-pr-review/references/comment-format.md)，关键要点：
+- 代码块格式：` ```语言:文件路径#L行号`
+- 支持行号范围：`#L34-35` 或 `#L34-L35`（自动取首行号发布）
+- 只能引用实际存在的代码，严禁虚构
 
 ---
 
