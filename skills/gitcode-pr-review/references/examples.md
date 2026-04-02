@@ -17,7 +17,8 @@
 执行命令序列：
 
 ```bash
-# 0. 记录仓库绝对路径（关键！）
+# 步骤 0: 确认工作环境（情况 A：用户已有仓库）
+# 记录仓库绝对路径（关键！）
 REPO_DIR="/home/user/cangjie_runtime"
 
 # 记录原始状态
@@ -29,21 +30,23 @@ git -C "$REPO_DIR" status
 # 如果有未提交的修改，执行 stash
 git -C "$REPO_DIR" stash push -m "auto-stash-before-pr-review-$(date +%Y%m%d%H%M%S)"
 
-# 3. 获取 PR 分支
+# 步骤 2: 获取 PR 分支（跳过步骤 1，因为已有仓库）
 git -C "$REPO_DIR" fetch https://gitcode.com/Cangjie/cangjie_runtime.git merge-requests/1028/head:review-1028
-
-# 4. 切换分支
 git -C "$REPO_DIR" checkout review-1028
 
-# 4.5. 获取 PR 审查上下文（通过 API）
+# 步骤 3: 验证变更范围（关键！）
+python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028 --files
+
+# 步骤 4: 获取 PR 审查上下文（通过 API）
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028
 
-# 5. 执行审查（同上）
-# ...
+# 步骤 5: 执行代码审查
+# ...（参照 checklists.md 执行审查清单）
 
-# 6. 展示审查报告，询问用户是否发布
+# 步骤 6: 展示审查报告并确认发布
+# 展示完整报告给用户，询问是否发布到 PR
 
-# 7. 清理和恢复
+# 步骤 7: 清理和恢复（情况 A）
 # 7.1 不需要清理（使用的是用户已有仓库）
 
 # 7.2 恢复用户工作状态
@@ -66,7 +69,10 @@ git -C "$REPO_DIR" branch --show-current
 执行命令序列：
 
 ```bash
-# 1-2. 创建目录并克隆仓库（链式命令确保在同一 shell 执行）
+# 步骤 0: 确认工作环境（情况 B：用户没有仓库）
+# → 执行步骤 1 克隆仓库
+
+# 步骤 1: 克隆仓库（链式命令确保在同一 shell 执行）
 mkdir -p pr_review && cd pr_review && git clone https://gitcode.com/Cangjie/cangjie_runtime.git
 
 # 记录仓库绝对路径（关键！）
@@ -78,36 +84,36 @@ REPO_DIR="/home/user/pr_review/cangjie_runtime"
 # 验证克隆成功
 git -C "$REPO_DIR" status
 
-# 3. 获取 PR 分支
+# 步骤 2: 获取 PR 分支
 git -C "$REPO_DIR" fetch https://gitcode.com/Cangjie/cangjie_runtime.git merge-requests/1028/head:review-1028
-
-# 4. 切换分支
 git -C "$REPO_DIR" checkout review-1028
 
-# 4.5. 获取 PR 审查上下文（通过 API）
+# 步骤 3: 验证变更范围（关键！）
+python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028 --files
+
+# 步骤 4: 获取 PR 审查上下文（通过 API）
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028
 # 输出会显示 PR 的声称修改点、文件变更等信息
 
-# 5. 执行审查
+# 步骤 5: 执行代码审查
 # 5.1 获取变更文件列表
 python3 <技能目录>/scripts/get_pr_info.py <token> Cangjie cangjie_runtime 1028 --files
 
 # 5.2 读取变更文件的完整内容（使用 Read 工具）
 # 例如：Read 文件路径 $REPO_DIR/stdlib/libs/std/net/native/socket_buffer.c
-# 这样可以看到完整函数定义和上下文
 
 # 5.3 查看 diff 了解具体修改
 git -C "$REPO_DIR" diff main...review-1028 --stat
 git -C "$REPO_DIR" diff main...review-1028
 
-# 5.4 执行安全审查清单检查
+# 5.4 执行审查清单检查（参照 checklists.md）
 grep -rnE "(key|secret|password|token|iv)\s*=\s*[\"']" "$REPO_DIR/stdlib/libs/std/net/"
 grep -rnE "(encrypt|decrypt|hash|crypto|auth)" "$REPO_DIR/stdlib/libs/std/net/"
 
-# 5.5 对照声称的修改点，验证修改全面性和正确性
-# 基于完整文件内容和审查结果，按照「审查报告格式规范」输出报告
+# 5.5 输出审查报告（参照 report-template.md 格式）
 
-# 6. 展示审查报告，询问用户是否发布到 PR
+# 步骤 6: 展示审查报告并确认发布
+# 展示完整报告给用户，询问是否发布到 PR
 # 如果用户确认发布：
 export GITCODE_TOKEN="your-token"
 export REPO_OWNER="Cangjie"
@@ -116,15 +122,12 @@ export PR_NUMBER="1028"
 python3 <技能目录>/scripts/pr-comment.py -f <技能目录>/pr_review_report.md --parse-report
 # 发布成功后删除临时文件
 rm -f <技能目录>/pr_review_report.md
-# 如果用户拒绝发布，跳过此步骤
 
-# 7. 清理和恢复
-# 7.1 询问用户是否清理临时目录
+# 步骤 7: 清理和恢复（情况 B）
+# 询问用户是否删除临时目录
 # 如果用户同意：
 rm -rf "$(dirname "$REPO_DIR")"  # 删除 pr_review 目录
 # 如果用户拒绝，则保留目录
-
-# 7.2 不需要恢复（使用的是新克隆的仓库）
 ```
 
 ---

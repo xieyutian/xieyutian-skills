@@ -66,40 +66,48 @@ def post_comment_to_gitcode(repo_owner: str, repo_name: str, pr_number: str,
         return False
 
 
-def parse_code_block(code_block: str) -> Tuple[Optional[str], Optional[int], str]:
+def parse_code_block(code_block: str) -> Tuple[Optional[str], Optional[int], Optional[int], str]:
     """
     解析代码块，提取文件路径、行号和代码内容
-    
+
     代码块格式示例：
     ```cj:src/main.cj#L20-L25
     代码内容
     ```
-    
+
     或简单格式：
     ```cj:src/main.cj#L20
     代码内容
     ```
-    
+
+    支持行号范围格式（#L34-35 或 #L34-L35），返回起始行号和结束行号。
+    发布行级评论时使用起始行号。
+
     Args:
         code_block: 代码块字符串
-    
+
     Returns:
-        (文件路径, 起始行号, 代码内容)
+        (文件路径, 起始行号, 结束行号, 代码内容)
     """
     # 匹配代码块开头：```语言:文件路径#L行号
-    pattern = r"```(\w+)?(?::([^#\n]+))?(?:#L(\d+)(?:-L(\d+))?)?\n([\s\S]*?)```"
+    # 支持格式：#L34、#L34-L35、#L34-35
+    pattern = r"```(\w+)?(?::([^#\n]+))?(?:#L(\d+)(?:-(?:L)?(\d+))?)?\n([\s\S]*?)```"
     match = re.search(pattern, code_block)
-    
+
     if match:
         language = match.group(1)
         file_path = match.group(2)
         start_line = int(match.group(3)) if match.group(3) else None
         end_line = int(match.group(4)) if match.group(4) else None
         code_content = match.group(5).strip()
-        
-        return file_path, start_line, code_content
-    
-    return None, None, code_block
+
+        # 如果有范围但未显式指定结束行，结束行等于起始行
+        if start_line and not end_line:
+            end_line = start_line
+
+        return file_path, start_line, end_line, code_content
+
+    return None, None, None, code_block
 
 
 def parse_issue_block(issue_text: str) -> Dict:
@@ -132,9 +140,10 @@ def parse_issue_block(issue_text: str) -> Dict:
     code_match = re.search(r"(```[\s\S]*?```)", issue_text)
     if code_match:
         issue["code_block"] = code_match.group(1)
-        file_path, line_number, _ = parse_code_block(issue["code_block"])
+        file_path, start_line, end_line, _ = parse_code_block(issue["code_block"])
         issue["file_path"] = file_path
-        issue["line_number"] = line_number
+        issue["line_number"] = start_line  # 使用起始行号发布评论
+        issue["line_range_end"] = end_line  # 记录范围结束行（用于日志）
     
     # 提取风险等级
     risk_match = re.search(r"\*\*风险等级\*\*[：:](\s*)(高|中|低)", issue_text)
@@ -156,24 +165,24 @@ def parse_issue_block(issue_text: str) -> Dict:
 
 def parse_review_report(report_content: str) -> Tuple[List[Dict], str]:
     """
-    解析代码审查报告，提取潜在问题和改进建议
-    
+    解析代码审查报告，提取潜在问题和改进建议（含总体评价）
+
     Args:
         report_content: 审查报告内容
-    
+
     Returns:
-        (潜在问题列表, 改进建议文本)
+        (潜在问题列表, 整体评论文本)
     """
     issues = []
-    suggestions = ""
-    
+    overall_comment = ""
+
     # 提取潜在问题部分
     # 支持格式: "### [-] 潜在问题" 或 "### ⚠️ 潜在问题" 或 "### 潜在问题"
     issues_section_match = re.search(
-        r"###\s*(?:\[-\]|⚠️)?\s*潜在问题([\s\S]*?)(?=###\s*(?:\[\*\]|💡)?\s*改进建议|###\s*📊|---\s*$|$)",
+        r"###\s*(?:\[-\]|⚠️)?\s*潜在问题([\s\S]*?)(?=###\s*(?:\[\*\]|💡)?\s*改进建议|###\s*(?:\[✓\]|✅)?\s*总体评价|###\s*📊|---\s*$|$)",
         report_content
     )
-    
+
     if issues_section_match:
         issues_section = issues_section_match.group(1)
         # 分割各个问题块（以 #### 数字. 开头）
@@ -183,18 +192,38 @@ def parse_review_report(report_content: str) -> Tuple[List[Dict], str]:
             if block and re.match(r"####\s*\d+\.", block):
                 issue = parse_issue_block(block)
                 issues.append(issue)
-    
+
     # 提取改进建议部分
     # 支持格式: "### [*] 改进建议" 或 "### 💡 改进建议" 或 "### 改进建议"
     suggestions_match = re.search(
-        r"###\s*(?:\[\*\]|💡)?\s*改进建议([\s\S]*?)(?=###\s*📊|---\s*$|$)",
+        r"###\s*(?:\[\*\]|💡)?\s*改进建议([\s\S]*?)(?=###\s*(?:\[✓\]|✅)?\s*总体评价|###\s*📊|---\s*$|$)",
         report_content
     )
-    
+
+    # 提取总体评价部分
+    # 支持格式: "### [✓] 总体评价" 或 "### ✅ 总体评价" 或 "### 总体评价"
+    evaluation_match = re.search(
+        r"###\s*(?:\[✓\]|✅)?\s*总体评价([\s\S]*?)(?=###\s*📊|---\s*$|$)",
+        report_content
+    )
+
+    # 合并改进建议和总体评价为整体评论
+    comment_parts = []
+
     if suggestions_match:
         suggestions = suggestions_match.group(1).strip()
-    
-    return issues, suggestions
+        if suggestions:
+            comment_parts.append(f"### 💡 改进建议\n\n{suggestions}")
+
+    if evaluation_match:
+        evaluation = evaluation_match.group(1).strip()
+        if evaluation:
+            comment_parts.append(f"### 📊 总体评价\n\n{evaluation}")
+
+    if comment_parts:
+        overall_comment = "\n\n".join(comment_parts)
+
+    return issues, overall_comment
 
 
 def format_issue_comment(issue: Dict) -> str:
@@ -235,19 +264,17 @@ def format_issue_comment(issue: Dict) -> str:
     return "\n".join(comment_parts)
 
 
-def format_suggestions_comment(suggestions: str) -> str:
+def format_overall_comment(overall_comment: str) -> str:
     """
-    格式化改进建议为评论内容
-    
+    格式化整体评论内容（改进建议 + 总体评价）
+
     Args:
-        suggestions: 改进建议文本
-    
+        overall_comment: 整体评论文本
+
     Returns:
         格式化后的评论内容
     """
-    return f"""## 💡 改进建议
-
-{suggestions}
+    return f"""{overall_comment}
 
 ---
 *此评论由自动化代码审查工具生成*"""
@@ -272,7 +299,7 @@ def publish_review_comments(repo_owner: str, repo_name: str, pr_number: str,
     fail_count = 0
     
     # 解析审查报告
-    issues, suggestions = parse_review_report(report_content)
+    issues, overall_comment = parse_review_report(report_content)
     
     print(f"\n解析到 {len(issues)} 个潜在问题")
     
@@ -284,7 +311,12 @@ def publish_review_comments(repo_owner: str, repo_name: str, pr_number: str,
         
         # 如果有文件路径和行号，发布行级评论
         if issue["file_path"] and issue["line_number"]:
-            print(f"  -> 发布行级评论: {issue['file_path']}#L{issue['line_number']}")
+            # 构建日志信息
+            line_info = f"{issue['file_path']}#L{issue['line_number']}"
+            range_end = issue.get("line_range_end")
+            if range_end and range_end != issue["line_number"]:
+                line_info += f" (范围: L{issue['line_number']}-L{range_end}，自动取首行)"
+            print(f"  -> 发布行级评论: {line_info}")
             success = post_comment_to_gitcode(
                 repo_owner, repo_name, pr_number, comment_body, token,
                 path=issue["file_path"],
@@ -302,12 +334,12 @@ def publish_review_comments(repo_owner: str, repo_name: str, pr_number: str,
         else:
             fail_count += 1
     
-    # 发布改进建议评论
-    if suggestions:
-        print(f"\n发布改进建议评论...")
-        suggestions_comment = format_suggestions_comment(suggestions)
+    # 发布整体评论（改进建议 + 总体评价）
+    if overall_comment:
+        print(f"\n发布整体评论...")
+        comment_body = format_overall_comment(overall_comment)
         success = post_comment_to_gitcode(
-            repo_owner, repo_name, pr_number, suggestions_comment, token
+            repo_owner, repo_name, pr_number, comment_body, token
         )
         if success:
             success_count += 1
