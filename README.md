@@ -9,6 +9,45 @@ Claude Code 技能集合，包含多个用于提升开发效率的自动化技�
 | [gitcode-pr-review](#gitcode-pr-review) | GitCode Pull Request 代码审查技能 |
 | [gitcode-pr-comment](#gitcode-pr-comment) | GitCode Pull Request 评论处理技能 |
 | [gitcode-api-helper](#gitcode-api-helper) | GitCode API 查询和检索技能 |
+| [gitcode-release](#gitcode-release) | GitCode 平台发行版自动创建技能 |
+
+---
+
+## gitcode-release
+
+基于本地 Git 仓库信息，自动在 GitCode 平台创建发行版（Release）。自动推断版本号，根据合入修改生成发行版描述。
+
+### 功能特点
+
+- 自动分析 Git 历史推断版本号（遵循语义化版本）
+- 根据提交记录自动生成发行版描述（CHANGELOG）
+- 支持 GitCode Tag 和 Release 一键创建
+- 支持手动指定版本号和目标分支
+
+### 使用前提
+
+- 系统已安装 Git 和 Python3（含 requests 库）
+- 已配置 GitCode Token
+
+### 使用方法
+
+```
+请帮我创建一个发行版
+发布 Release 到 GitCode
+为这个仓库打 Tag 发布 v2.1.0
+```
+
+### 目录结构
+
+```
+skills/gitcode-release/
+├── SKILL.md                      # 技能定义和流程说明
+├── scripts/
+│   └── create_release.py         # 发行版创建脚本
+└── references/
+    ├── release-template.md       # 发行版描述模板
+    └── examples.md               # 使用示例
+```
 
 ---
 
