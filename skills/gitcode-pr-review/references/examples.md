@@ -107,8 +107,8 @@ git -C "$REPO_DIR" diff main...review-1028 --stat
 git -C "$REPO_DIR" diff main...review-1028
 
 # 5.4 执行审查清单检查（参照 checklists.md）
-grep -rnE "(key|secret|password|token|iv)\s*=\s*[\"']" "$REPO_DIR/stdlib/libs/std/net/"
-grep -rnE "(encrypt|decrypt|hash|crypto|auth)" "$REPO_DIR/stdlib/libs/std/net/"
+# 使用 Read 工具读取变更文件的完整内容，使用 Grep 工具搜索敏感关键词
+# Grep 模式示例：(key|secret|password|token|iv)\s*=\s*["'] 或 (encrypt|decrypt|hash|crypto|auth)
 
 # 5.5 输出审查报告（参照 report-template.md 格式）
 
